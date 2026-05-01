@@ -1,5 +1,5 @@
 from resume.resume.doctype.pdf_upload.pdf_upload import _extract_and_parse_file
-from resume_ai.api.resume.resume import (
+from vaaman_ats_ai.api.resume.resume import (
     calculate_experience_years,
     flatten_resume_data,
     create_resume_from_upload,

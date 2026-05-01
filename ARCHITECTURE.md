@@ -28,8 +28,8 @@ This app automatically:
 # 📦 Installation
 
 ```bash
-bench get-app resume_ai
-bench install-app resume_ai
+bench get-app vaaman_ats_ai
+bench install-app vaaman_ats_ai
 ```
 
 That’s it. No additional setup required.
@@ -136,7 +136,7 @@ The system automatically handles failures:
 You can check Ollama status:
 
 ```python
-frappe.call("resume_ai.api.resume.resume.check_ollama_health")
+frappe.call("vaaman_ats_ai.api.resume.resume.check_ollama_health")
 ```
 
 ---

@@ -8,7 +8,7 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        files: "resume_ai.*"
+        files: "vaaman_ats_ai.*"
         exclude: ".*json$|.*txt$|.*csv|.*md|.*svg"
       - id: check-merge-conflict
       - id: check-ast
@@ -38,11 +38,11 @@ repos:
         # Ignore any files that might contain jinja / bundles
         exclude: |
             (?x)^(
-                resume_ai/public/dist/.*|
+                vaaman_ats_ai/public/dist/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
-                resume_ai/templates/includes/.*|
-                resume_ai/public/js/lib/.*
+                vaaman_ats_ai/templates/includes/.*|
+                vaaman_ats_ai/public/js/lib/.*
             )$
 
 
@@ -55,12 +55,12 @@ repos:
         # Ignore any files that might contain jinja / bundles
         exclude: |
             (?x)^(
-                resume_ai/public/dist/.*|
+                vaaman_ats_ai/public/dist/.*|
                 cypress/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
-                resume_ai/templates/includes/.*|
-                resume_ai/public/js/lib/.*
+                vaaman_ats_ai/templates/includes/.*|
+                vaaman_ats_ai/public/js/lib/.*
             )$
 
 ci:

@@ -1,8 +1,8 @@
 # import frappe
 # import json
-# from resume_ai.api.resume.embedder import embed_texts
-# from resume_ai.api.resume.vector_store import search_similar
-# from resume_ai.api.resume.gemini import get_gemini
+# from vaaman_ats_ai.api.resume.embedder import embed_texts
+# from vaaman_ats_ai.api.resume.vector_store import search_similar
+# from vaaman_ats_ai.api.resume.gemini import get_gemini
 
 # # -----------------------------
 # # 1️⃣ LLM Generation Function
@@ -297,9 +297,9 @@
 
 import frappe
 import json
-from resume_ai.api.resume.embedder import embed_texts
-from resume_ai.api.resume.vector_store import search_similar
-from resume_ai.api.resume.gemini import get_gemini
+from vaaman_ats_ai.api.resume.embedder import embed_texts
+from vaaman_ats_ai.api.resume.vector_store import search_similar
+from vaaman_ats_ai.api.resume.gemini import get_gemini
 
 # -----------------------------
 # 1️⃣ LLM Generation Function

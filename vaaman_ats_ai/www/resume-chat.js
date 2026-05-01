@@ -43,8 +43,8 @@ frappe.ready(() => {
     const loaderId = "loader-" + Date.now();
     chatBox.innerHTML += `<div id="${loaderId}"><i>AI is thinking...</i></div>`;
 
-    // fetch("/api/method/resume_ai.chat_api.chat_query", {
-    fetch("/api/method/resume_ai.api.resume.chat_api.chat_query", {
+    // fetch("/api/method/vaaman_ats_ai.chat_api.chat_query", {
+    fetch("/api/method/vaaman_ats_ai.api.resume.chat_api.chat_query", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

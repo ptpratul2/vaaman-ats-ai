@@ -64,7 +64,7 @@ LLM Answer (Grounded)
 
 ## 🗂️ Project Structure
 
-resume_ai/
+vaaman_ats_ai/
 ├── parse_resume.py # Resume upload & parsing API
 ├── chat_api.py # Chat query API
 ├── chunker.py # Resume chunking logic
@@ -120,7 +120,7 @@ Ask questions like:
 
 API Testing (Chat)
 
-POST /api/method/resume_ai.chat_api.chat_query
+POST /api/method/vaaman_ats_ai.chat_api.chat_query
 
 {
   "question": "Who has backend experience?"
@@ -131,8 +131,8 @@ POST /api/method/resume_ai.chat_api.chat_query
 
 To rebuild AI memory:
 
-rm apps/resume_ai/resume_ai/faiss.index
-rm apps/resume_ai/resume_ai/metadata.json
+rm apps/vaaman_ats_ai/vaaman_ats_ai/faiss.index
+rm apps/vaaman_ats_ai/vaaman_ats_ai/metadata.json
 
 
 ✅ How Frappe uses this file (important)
@@ -146,7 +146,7 @@ bench setup requirements
 
 or (safe alternative):
 
-bench pip install -r apps/resume_ai/requirements.txt
+bench pip install -r apps/vaaman_ats_ai/requirements.txt
 
 
 ✅ This installs dependencies into the bench virtualenv.

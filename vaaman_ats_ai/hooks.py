@@ -1,4 +1,4 @@
-app_name = "resume_ai"
+app_name = "vaaman_ats_ai"
 app_title = "Vaaman ATS AI"
 app_publisher = "ajayshivhare047@gmail.com"
 app_description = "vaaman-ats-ai"
@@ -13,11 +13,11 @@ app_license = "mit"
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
-# 		"name": "resume_ai",
-# 		"logo": "/assets/resume_ai/logo.png",
+# 		"name": "vaaman_ats_ai",
+# 		"logo": "/assets/vaaman_ats_ai/logo.png",
 # 		"title": "Resume Ai",
-# 		"route": "/resume_ai",
-# 		"has_permission": "resume_ai.api.permission.has_app_permission"
+# 		"route": "/vaaman_ats_ai",
+# 		"has_permission": "vaaman_ats_ai.api.permission.has_app_permission"
 # 	}
 # ]
 
@@ -25,15 +25,15 @@ app_license = "mit"
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/resume_ai/css/resume_ai.css"
-# app_include_js = "/assets/resume_ai/js/resume_ai.js"
+# app_include_css = "/assets/vaaman_ats_ai/css/vaaman_ats_ai.css"
+# app_include_js = "/assets/vaaman_ats_ai/js/vaaman_ats_ai.js"
 
 # include js, css files in header of web template
-# web_include_css = "/assets/resume_ai/css/resume_ai.css"
-# web_include_js = "/assets/resume_ai/js/resume_ai.js"
+# web_include_css = "/assets/vaaman_ats_ai/css/vaaman_ats_ai.css"
+# web_include_js = "/assets/vaaman_ats_ai/js/vaaman_ats_ai.js"
 
 # include custom scss in every website theme (without file extension ".scss")
-# website_theme_scss = "resume_ai/public/scss/website"
+# website_theme_scss = "vaaman_ats_ai/public/scss/website"
 
 # include js, css files in header of web form
 # webform_include_js = {"doctype": "public/js/doctype.js"}
@@ -51,7 +51,7 @@ app_license = "mit"
 # Svg Icons
 # ------------------
 # include app icons in desk
-# app_include_icons = "resume_ai/public/icons.svg"
+# app_include_icons = "vaaman_ats_ai/public/icons.svg"
 
 # Home Pages
 # ----------
@@ -75,44 +75,44 @@ app_license = "mit"
 
 # add methods and filters to jinja environment
 # jinja = {
-# 	"methods": "resume_ai.utils.jinja_methods",
-# 	"filters": "resume_ai.utils.jinja_filters"
+# 	"methods": "vaaman_ats_ai.utils.jinja_methods",
+# 	"filters": "vaaman_ats_ai.utils.jinja_filters"
 # }
 
 # Installation
 # ------------
 
-# before_install = "resume_ai.install.before_install"
-# after_install = "resume_ai.install.after_install"
-after_install = "resume_ai.setup.after_install"
+# before_install = "vaaman_ats_ai.install.before_install"
+# after_install = "vaaman_ats_ai.install.after_install"
+after_install = "vaaman_ats_ai.setup.after_install"
 
 # Uninstallation
 # ------------
 
-# before_uninstall = "resume_ai.uninstall.before_uninstall"
-# after_uninstall = "resume_ai.uninstall.after_uninstall"
+# before_uninstall = "vaaman_ats_ai.uninstall.before_uninstall"
+# after_uninstall = "vaaman_ats_ai.uninstall.after_uninstall"
 
 # Integration Setup
 # ------------------
 # To set up dependencies/integrations with other apps
 # Name of the app being installed is passed as an argument
 
-# before_app_install = "resume_ai.utils.before_app_install"
-# after_app_install = "resume_ai.utils.after_app_install"
+# before_app_install = "vaaman_ats_ai.utils.before_app_install"
+# after_app_install = "vaaman_ats_ai.utils.after_app_install"
 
 # Integration Cleanup
 # -------------------
 # To clean up dependencies/integrations with other apps
 # Name of the app being uninstalled is passed as an argument
 
-# before_app_uninstall = "resume_ai.utils.before_app_uninstall"
-# after_app_uninstall = "resume_ai.utils.after_app_uninstall"
+# before_app_uninstall = "vaaman_ats_ai.utils.before_app_uninstall"
+# after_app_uninstall = "vaaman_ats_ai.utils.after_app_uninstall"
 
 # Desk Notifications
 # ------------------
 # See frappe.core.notifications.get_notification_config
 
-# notification_config = "resume_ai.notifications.get_notification_config"
+# notification_config = "vaaman_ats_ai.notifications.get_notification_config"
 
 # Permissions
 # -----------
@@ -148,8 +148,8 @@ after_install = "resume_ai.setup.after_install"
 
 # doc_events = {
 #     "Resume": {
-#         "after_insert": "resume_ai.api.resume.resume.resume",
-#         # "validate": "resume_ai.api.resume.resume.resume",
+#         "after_insert": "vaaman_ats_ai.api.resume.resume.resume",
+#         # "validate": "vaaman_ats_ai.api.resume.resume.resume",
 #     }
 # }
 
@@ -158,19 +158,19 @@ after_install = "resume_ai.setup.after_install"
 
 # scheduler_events = {
 # 	"all": [
-# 		"resume_ai.tasks.all"
+# 		"vaaman_ats_ai.tasks.all"
 # 	],
 # 	"daily": [
-# 		"resume_ai.tasks.daily"
+# 		"vaaman_ats_ai.tasks.daily"
 # 	],
 # 	"hourly": [
-# 		"resume_ai.tasks.hourly"
+# 		"vaaman_ats_ai.tasks.hourly"
 # 	],
 # 	"weekly": [
-# 		"resume_ai.tasks.weekly"
+# 		"vaaman_ats_ai.tasks.weekly"
 # 	],
 # 	"monthly": [
-# 		"resume_ai.tasks.monthly"
+# 		"vaaman_ats_ai.tasks.monthly"
 # 	],
 # }
 
@@ -185,7 +185,7 @@ after_install = "resume_ai.setup.after_install"
 scheduler_events = {
     "cron": {
         "*/10 * * * *": [
-            "resume_ai.api.email.fetch_resumes.fetch_email_resumes"
+            "vaaman_ats_ai.api.email.fetch_resumes.fetch_email_resumes"
         ]
     }
 }
@@ -193,20 +193,20 @@ scheduler_events = {
 # Testing
 # -------
 
-# before_tests = "resume_ai.install.before_tests"
+# before_tests = "vaaman_ats_ai.install.before_tests"
 
 # Overriding Methods
 # ------------------------------
 #
 # override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "resume_ai.event.get_events"
+# 	"frappe.desk.doctype.event.event.get_events": "vaaman_ats_ai.event.get_events"
 # }
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
 # override_doctype_dashboards = {
-# 	"Task": "resume_ai.task.get_dashboard_data"
+# 	"Task": "vaaman_ats_ai.task.get_dashboard_data"
 # }
 
 # exempt linked doctypes from being automatically cancelled
@@ -220,13 +220,13 @@ scheduler_events = {
 
 # Request Events
 # ----------------
-# before_request = ["resume_ai.utils.before_request"]
-# after_request = ["resume_ai.utils.after_request"]
+# before_request = ["vaaman_ats_ai.utils.before_request"]
+# after_request = ["vaaman_ats_ai.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["resume_ai.utils.before_job"]
-# after_job = ["resume_ai.utils.after_job"]
+# before_job = ["vaaman_ats_ai.utils.before_job"]
+# after_job = ["vaaman_ats_ai.utils.after_job"]
 
 # User Data Protection
 # --------------------
@@ -256,7 +256,7 @@ scheduler_events = {
 # --------------------------------
 
 # auth_hooks = [
-# 	"resume_ai.auth.validate"
+# 	"vaaman_ats_ai.auth.validate"
 # ]
 
 # Automatically update python controller files with type annotations for this app.

@@ -4,11 +4,11 @@ import frappe
 import requests
 import json
 import re
-from resume_ai.api.resume.chunker import chunk_text
-from resume_ai.api.resume.embedder import embed_texts
-from resume_ai.api.resume.vector_store import add_embeddings
+from vaaman_ats_ai.api.resume.chunker import chunk_text
+from vaaman_ats_ai.api.resume.embedder import embed_texts
+from vaaman_ats_ai.api.resume.vector_store import add_embeddings
 from datetime import datetime
-from resume_ai.api.resume.gemini import get_gemini
+from vaaman_ats_ai.api.resume.gemini import get_gemini
 
 PROMPT = """
 You are an advanced resume parsing engine.
@@ -166,7 +166,7 @@ def index_resume(resume_id, resume_text):
     
 #     # 2. Trigger your exact logic in the background
 #     frappe.enqueue(
-#         "resume_ai.api.resume.resume.process_resume_bg",
+#         "vaaman_ats_ai.api.resume.resume.process_resume_bg",
 #         doc_name=doc.name,
 #         queue="long",
 #         timeout=300
@@ -262,7 +262,7 @@ def create_resume_from_upload(applicant_data, file_url, job_opening=None, applic
     # )
     
     frappe.enqueue(
-        "resume_ai.api.resume.resume.index_resume_bg",
+        "vaaman_ats_ai.api.resume.resume.index_resume_bg",
         resume_id=applicant_doc.name,
         resume_text=resume_text,
         queue="long",
@@ -331,7 +331,7 @@ def create_resume_from_upload(applicant_data, file_url, job_opening=None, applic
 #         resume_text = json.dumps(parsed)  # use parsed JSON as text source
 #         index_resume(doc.name, resume_text)
 #         # frappe.enqueue(
-#         #     "resume_ai.api.resume.resume.index_resume_bg",
+#         #     "vaaman_ats_ai.api.resume.resume.index_resume_bg",
 #         #     resume_id=doc.name,
 #         #     resume_text=resume_text,
 #         #     queue="long",
