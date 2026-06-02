@@ -528,6 +528,7 @@ Body:{email_body[:600]}
 
 Match candidate to ONE job. Output JSON only."""
 
+    result = None
     for attempt in range(max_retries):
         try:
             response = client.chat(
@@ -698,25 +699,32 @@ def match_job_opening_hybrid(email_subject, email_body, job_openings, resume_dat
         frappe.log_error("Ollama crash", frappe.get_traceback())
         ollama_result = _safe_fallback_result("Ollama crash")
 
-    # ✅ Fallback condition
-    should_fallback = (
-        not ollama_result.get("job_opening")
-        or ollama_result.get("confidence") == "low"
-        or ollama_result.get("fit_level") == "Unable to Assess"
-        or ollama_result.get("score", 0) < 50
-    )
-
-    gemini_result = None
-
+    # ✅ Fallback condition (strict): use Gemini only when Ollama cannot match any job
+    # should_fallback = not ollama_result.get("job_opening")
+    should_fallback = ollama_result.get("api_failed", False)
+    
     if should_fallback:
+        # (Optional) Yahan aap ek Frappe Email/Notification trigger karwa sakte hain 
+        # khudko warn karne ke liye ki "Ollama is down, billing is happening!"
+        frappe.log_error("Ollama server down! Falling back to paid Gemini API.", "Billing Alert")
+        
         gemini_result = match_job_opening_with_gemini(
             email_subject, email_body, job_openings, resume_data
         )
+        return gemini_result
 
-    # ✅ Final decision
-    final_result = gemini_result if (
-        gemini_result and gemini_result.get("score", 0) > ollama_result.get("score", 0)
-    ) else ollama_result
+    # gemini_result = None
+
+    # if should_fallback:
+    #     frappe.log_error("Ollama server down! Falling back to paid Gemini API.", "Billing Alert")
+    #     gemini_result = match_job_opening_with_gemini(
+    #         email_subject, email_body, job_openings, resume_data
+    #     )
+
+    # # ✅ Final decision
+    # final_result = gemini_result if (
+    #     gemini_result and gemini_result.get("score", 0) > ollama_result.get("score", 0)
+    # ) else ollama_result
 
     return final_result
     
