@@ -700,8 +700,7 @@ def match_job_opening_hybrid(email_subject, email_body, job_openings, resume_dat
         ollama_result = _safe_fallback_result("Ollama crash")
 
     # ✅ Fallback condition (strict): use Gemini only when Ollama cannot match any job
-    # should_fallback = not ollama_result.get("job_opening")
-    should_fallback = ollama_result.get("api_failed", False)
+    should_fallback = not ollama_result.get("job_opening")
     
     if should_fallback:
         # (Optional) Yahan aap ek Frappe Email/Notification trigger karwa sakte hain 
