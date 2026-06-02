@@ -1,0 +1,13 @@
+[
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Email Account",
+  "enabled": 1,
+  "modified": "2026-06-01 13:10:36.309770",
+  "module": "Vaaman Ats Ai",
+  "name": "Bulk Email Fetch",
+  "script": "frappe.ui.form.on('Email Account', {\r\n    refresh: function(frm) {\r\n        \r\n        if (frm.doc.enable_incoming && !frm.is_new()) {\r\n            frm.add_custom_button(__('📥 Sync Full History'), function() {\r\n                console.log(frm.doc.name, \"--test\")\r\n                frappe.call({\r\n                    // ✅ Sirf enqueue wala method call karein\r\n                    method: 'vaaman_ats_ai.api.email.tasks.enqueue_full_email_sync',\r\n                    args: { email_account_name: frm.doc.name },\r\n                    callback: function(r) {\r\n                        if (r.message) frappe.msgprint(r.message);\r\n                    }\r\n                });\r\n            }, 'Sync');\r\n        }\r\n    }\r\n});",
+  "view": "Form"
+ }
+]

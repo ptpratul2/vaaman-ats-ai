@@ -293,4 +293,10 @@ fixtures = [
             ["dt", "in", ["Communication"]]
         ]
     },
+    {
+        "doctype": "Client Script",
+        "filters": [
+            ["dt", "in", ["Email Account"]]
+        ]
+    },
 ]
