@@ -8,7 +8,10 @@ from vaaman_ats_ai.api.resume.chunker import chunk_text
 from vaaman_ats_ai.api.resume.embedder import embed_texts
 from vaaman_ats_ai.api.resume.vector_store import add_embeddings
 from datetime import datetime
-from vaaman_ats_ai.api.resume.gemini import get_gemini
+from vaaman_ats_ai.api.resume.gemini import (
+    get_gemini,
+    get_configured_gemini_model,
+)
 
 PROMPT = """
 You are an advanced resume parsing engine.
@@ -63,8 +66,6 @@ Rules:
 - If exact dates are unknown, use the first day of the month (e.g., "YYYY-MM-01") or year ("YYYY-01-01").
 - Do not guess missing details. Do not fabricate data.
 """
-
-from datetime import datetime
 
 def calculate_experience_years(experiences):
     total_months = 0
@@ -439,19 +440,6 @@ def create_resume_from_upload(applicant_data, file_url, job_opening=None, applic
 #         return None  # Fallback to None if AI fails
     
     
-import ollama
-import json
-import frappe
-
-# ✅ Configurable via site_config.json
-# OLLAMA_MODEL = frappe.conf.get("ollama_model", "gemma4:e2b")
-OLLAMA_MODEL = frappe.db.get_single_value("ATS Settings", "ollama_model") or frappe.conf.get("ollama_model", "gemma4:e2b")
-OLLAMA_HOST =  frappe.db.get_single_value("ATS Settings", "ollama_host") or frappe.conf.get("ollama_host", "http://localhost:11434")
-
-def get_ollama_client():
-    """Initialize Ollama client with configurable host."""
-    return ollama.Client(host=OLLAMA_HOST)
-
 def extract_json_from_response(text: str) -> dict | None:
     """Safely extract JSON from LLM response text."""
     text = text.strip()
@@ -480,102 +468,9 @@ def extract_json_from_response(text: str) -> dict | None:
                 pass
     return None
 
-def match_job_opening_with_ai(email_subject, email_body, job_openings, resume_data=None, max_retries=2):
-    """
-    Match email + resume to Job Opening using Ollama + Gemma 2B.
-    Returns: dict with job_opening, confidence, fit_level, score, justification
-    """
-    client = get_ollama_client()
-    
-    # ✅ Truncate context for Gemma 2B (~8K token limit)
-    jobs_context = "\n".join([
-        f"• ID:{j['name']} | {j['job_title']} ({j.get('department','N/A')})\n"
-        f"  Desc:{j.get('description','')[:150]}...\n"
-        f"  Reqs:{j.get('requirements','')[:100]}..."
-        for j in job_openings
-    ])
 
-    resume_context = ""
-    if resume_data:
-        skills = ", ".join([s.get("skill_name","") for s in resume_data.get("skills",[])[:5]])
-        resume_context = f"""[CANDIDATE]
-Name:{resume_data.get('applicant_name','')}
-Skills:{skills}
-Exp:{resume_data.get('experience_years',0)}yrs
-Role:{resume_data.get('current_role','N/A')}
-Edu:{resume_data.get('degree','N/A')}@{resume_data.get('institution','N/A')}"""
-
-    # ✅ Optimized prompt for small model + JSON output
-    system_prompt = """You are an HR screening AI. Output ONLY valid JSON. No markdown, no explanations.
-Required JSON schema:
-{
-  "matched_job_id": "Job Opening name or null",
-  "match_confidence": "high"|"medium"|"low",
-  "fit_level": "Strong Fit"|"Moderate Fit"|"Weak Fit"|"Unable to Assess",
-  "score": 0-100,
-  "justification_by_ai": "Max 20 words explaining match"
-}
-Rules: If unclear→null, be conservative, no fabricated data."""
-
-    user_prompt = f"""[EMAIL]
-Subject:{email_subject}
-Body:{email_body[:600]}
-
-{resume_context}
-
-[OPEN_JOBS]
-{jobs_context}
-
-Match candidate to ONE job. Output JSON only."""
-
-    result = None
-    for attempt in range(max_retries):
-        try:
-            response = client.chat(
-                model=OLLAMA_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                options={
-                    "temperature": 0.1,      # Deterministic output
-                    "num_ctx": 8192,         # Gemma 2B context window
-                    "repeat_penalty": 1.1,   # Reduce repetition
-                    "top_p": 0.9
-                },
-                keep_alive="5m"  # Keep model loaded for 5 min
-            )
-            
-            content = response["message"]["content"]
-            
-            result = extract_json_from_response(content)
-            
-            if result and isinstance(result, dict):
-                break
-                
-            frappe.log_error(
-                title=f"Ollama JSON Parse Retry {attempt+1}",
-                message=f"Raw: {content[:400]}"
-            )
-            
-        except ollama.ResponseError as e:
-            frappe.log_error(title="Ollama ResponseError", message=f"{e.status_code}: {e.error}")
-            if attempt == max_retries - 1:
-                return _safe_fallback_result("API Error")
-        except Exception as e:
-            frappe.log_error(title="Ollama Call Error", message=f"{str(e)}\n{frappe.get_traceback()}")
-            if attempt == max_retries - 1:
-                return _safe_fallback_result("Processing Error")
-    
-    if not result:
-        return _safe_fallback_result("No valid response")
-    
-    # ✅ Validate & sanitize output
-    return _validate_ai_result(result)
-
-
-def _validate_ai_result(result: dict) -> dict:
-    """Sanitize AI output to match expected schema."""
+def _validate_ai_result(result: dict, ai_provider: str = "unknown") -> dict:
+    """Sanitize AI output to match expected schema and attach AI provider name."""
     return {
         "job_opening": (
             result.get("matched_job_id") 
@@ -593,48 +488,248 @@ def _validate_ai_result(result: dict) -> dict:
             else "Unable to Assess"
         ),
         "score": min(100, max(0, int(result.get("score", 0) or 0))),
-        "justification": (result.get("justification_by_ai") or "")[:200]
+        "justification": (result.get("justification_by_ai") or "")[:200],
+        
+        "ai_provider": ai_provider  # ✅ NAYA FLAG: Ye batayega ki kis AI ne kaam kiya
     }
 
 
-def _safe_fallback_result(reason: str) -> dict:
+
+def _safe_fallback_result(reason: str, is_error: bool = True, ai_provider: str = "none") -> dict:
     """Return safe defaults when AI fails."""
     return {
         "job_opening": None,
         "confidence": "low",
         "fit_level": "Unable to Assess",
         "score": 0,
-        "justification": f"AI unavailable: {reason}"
+        "justification": f"AI unavailable: {reason}",
+        "api_failed": is_error,
+        
+        "ai_provider": ai_provider  # ✅ NAYA FLAG
     }
     
-def is_ollama_available():
-    import shutil
-    if not shutil.which("ollama"):
-        return False
+def get_active_job_openings_cached(ttl_sec=300):
+    """Load open job openings once per worker; cache 5 min to avoid repeated DB hits."""
+    cache_key = "ats_active_job_openings"
+    cached = frappe.cache().get_value(cache_key)
+    if cached:
+        return cached
+    openings = frappe.get_all(
+        "Job Opening",
+        filters={"status": "Open"},
+        fields=["name", "job_title", "department", "description"],
+    )
+    frappe.cache().set_value(cache_key, openings, expires_in_sec=ttl_sec)
+    return openings
 
+
+def _normalize_email_subject(email_subject):
+    return re.sub(
+        r"^(?:\s*(?:re|fwd|fw)\s*:\s*)+",
+        "",
+        (email_subject or "").strip(),
+        flags=re.IGNORECASE,
+    ).lower()
+
+
+def _score_job_against_email(job, subject_norm, body_norm=""):
+    """Heuristic score 0–100 — no AI."""
+    job_name = (job.get("name") or "").strip()
+    title = (job.get("job_title") or "").strip().lower()
+    dept = (job.get("department") or "").strip().lower()
+    text = f"{subject_norm} {body_norm}"
+
+    if job_name and job_name.lower() in subject_norm:
+        return 100
+    if title and len(title) >= 4 and title in subject_norm:
+        return 90
+    if dept and len(dept) >= 3 and dept in text:
+        return 75
+
+    title_tokens = {
+        t for t in re.findall(r"[a-z0-9]{4,}", title) if t not in _SUBJECT_STOPWORDS
+    }
+    text_tokens = {
+        t for t in re.findall(r"[a-z0-9]{4,}", text) if t not in _SUBJECT_STOPWORDS
+    }
+    overlap = len(title_tokens & text_tokens)
+    if overlap >= 3:
+        return 70
+    if overlap >= 2:
+        return 55
+    if overlap >= 1:
+        return 40
+    return 0
+
+
+def match_job_opening_from_subject(email_subject, job_openings, email_body=None):
+    """Keyword match from email subject/body — no AI cost."""
+    if not email_subject or not job_openings:
+        return None
+
+    subject_norm = _normalize_email_subject(email_subject)
+    body_norm = (email_body or "")[:500].lower()
+
+    best_job = None
+    best_score = 0
+
+    for job in job_openings:
+        score = _score_job_against_email(job, subject_norm, body_norm)
+        if score > best_score:
+            best_score = score
+            best_job = job
+
+    if not best_job or best_score < 45:
+        return None
+
+    return {
+        "job_opening": best_job.get("name"),
+        "confidence": "high" if best_score >= 85 else "medium",
+        "fit_level": "Unable to Assess",
+        "score": 0,
+        "justification": "Matched from email subject keywords (no AI)",
+        "ai_provider": "keyword",
+    }
+
+
+def narrow_job_openings_for_match(email_subject, email_body, job_openings, max_jobs=5):
+    """Keep only the most likely job openings for the AI prompt (faster Ollama/Gemini)."""
+    if not job_openings:
+        return []
+    if len(job_openings) <= max_jobs:
+        return job_openings
+
+    subject_norm = _normalize_email_subject(email_subject)
+    body_norm = (email_body or "")[:500].lower()
+
+    scored = []
+    for job in job_openings:
+        score = _score_job_against_email(job, subject_norm, body_norm)
+        if score > 0:
+            scored.append((score, job))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if scored:
+        return [job for _, job in scored[:max_jobs]]
+
+    return job_openings[:max_jobs]
+
+
+def match_job_opening_for_email(email_subject, email_body, job_openings, use_cache=True):
+    """
+    Fast job match for career emails:
+    1) cache by normalized subject
+    2) keyword match (free)
+    3) if not matched, Gemini fallback (job_matching_model)
+    """
+    if not job_openings:
+        return _safe_fallback_result("No open jobs")
+
+    if len(job_openings) == 1:
+        return {
+            "job_opening": job_openings[0].get("name"),
+            "confidence": "high",
+            "fit_level": "Unable to Assess",
+            "score": 0,
+            "justification": "Single active job opening auto-mapped",
+            "ai_provider": "single_job",
+        }
+
+    subject_norm = _normalize_email_subject(email_subject)
+    cache_key = f"job_match:gemini:{hash(subject_norm)}:{len(job_openings)}"
+    if use_cache:
+        cached = frappe.cache().get_value(cache_key)
+        if cached:
+            cached = dict(cached)
+            cached["ai_provider"] = "cached"
+            return cached
+
+    keyword = match_job_opening_from_subject(email_subject, job_openings, email_body)
+    if keyword:
+        if use_cache:
+            frappe.cache().set_value(cache_key, keyword, expires_in_sec=3600)
+        return keyword
+
+    narrowed = narrow_job_openings_for_match(email_subject, email_body, job_openings)
+    result = match_job_opening_hybrid(
+        email_subject=email_subject,
+        email_body=email_body,
+        job_openings=narrowed,
+    )
+
+    if use_cache and result and result.get("job_opening"):
+        frappe.cache().set_value(cache_key, result, expires_in_sec=3600)
+    return result
+
+
+_SUBJECT_STOPWORDS = {
+    "application",
+    "apply",
+    "applying",
+    "candidate",
+    "career",
+    "email",
+    "engineer",
+    "fresher",
+    "graduate",
+    "hiring",
+    "interview",
+    "job",
+    "opening",
+    "position",
+    "resume",
+    "subject",
+    "trainee",
+    "vaaman",
+}
+
+
+def _get_job_matching_model():
+    """Separate model for job matching so resume parsing can stay on higher-quality model."""
+    default_model = frappe.conf.get("job_matching_model") or "gemini-1.5-flash"
     try:
-        client = get_ollama_client()
-        client.list()
-        return True
-    except:
-        return False
-    
-def match_job_opening_with_gemini(email_subject, email_body, job_openings, resume_data=None):
-    try:
-        model = get_gemini()
+        row = frappe.db.sql(
+            """
+            SELECT value
+            FROM `tabSingles`
+            WHERE doctype='ATS Settings' AND field='job_matching_model'
+            LIMIT 1
+            """,
+            as_dict=True,
+        )
+        if row and row[0].get("value"):
+            return row[0]["value"]
+    except Exception:
+        pass
+    return default_model
 
-        jobs_context = "\n".join([
-            f"ID:{j['name']} | {j['job_title']} | {j.get('department','')}\n"
-            f"{j.get('description','')[:300]}"
-            for j in job_openings
-        ])
 
-        prompt = f"""
+def _gemini_model_candidates():
+    configured = _get_job_matching_model()
+    # Prefer cheap model for job matching; fallback to higher quality only if needed.
+    fallbacks = ["gemini-1.5-flash", get_configured_gemini_model(), "gemini-2.5-flash"]
+    seen = set()
+    ordered = []
+    for model_name in [configured] + fallbacks:
+        if model_name and model_name not in seen:
+            seen.add(model_name)
+            ordered.append(model_name)
+    return ordered
+
+
+def match_job_opening_with_gemini(email_subject, email_body, job_openings, resume_data=None, max_retries=1):
+    jobs_context = "\n".join([
+        f"ID:{j['name']} | {j['job_title']} | {j.get('department','')}\n"
+        f"{j.get('description','')[:120]}"
+        for j in job_openings
+    ])
+
+    prompt = f"""
 You are an HR AI.
 
 EMAIL:
 Subject: {email_subject}
-Body: {email_body[:800]}
+Body: {email_body[:400]}
 
 JOBS:
 {jobs_context}
@@ -649,135 +744,63 @@ Return ONLY JSON:
 }}
 """
 
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+    last_error = None
+    for model_name in _gemini_model_candidates():
+        for attempt in range(max_retries):
+            try:
+                model = get_gemini(model_name=model_name)
+                response = model.generate_content(prompt)
+                text = (response.text or "").strip()
+                result = extract_json_from_response(text)
 
-        result = extract_json_from_response(text)
+                if not result:
+                    last_error = f"invalid_json:{model_name}"
+                    continue
 
-        if not result:
-            return _safe_fallback_result("Gemini invalid response")
+                return _validate_ai_result({
+                    "matched_job_id": result.get("matched_job_id"),
+                    "match_confidence": result.get("confidence"),
+                    "fit_level": result.get("fit_level"),
+                    "score": result.get("score"),
+                    "justification_by_ai": result.get("justification")
+                }, ai_provider=f"gemini:{model_name}")
+            except Exception:
+                last_error = f"{model_name}: {frappe.get_traceback()}"
+                # Retry same model quickly once, then move to next fallback model.
+                continue
 
-        return _validate_ai_result({
-            "matched_job_id": result.get("matched_job_id"),
-            "match_confidence": result.get("confidence"),
-            "fit_level": result.get("fit_level"),
-            "score": result.get("score"),
-            "justification_by_ai": result.get("justification")
-        })
-
-    except Exception:
-        frappe.log_error("Gemini fallback failed", frappe.get_traceback())
-        return _safe_fallback_result("Gemini failed")
+    frappe.log_error(
+        title="Gemini job matching failed",
+        message=str(last_error or "Unknown Gemini failure"),
+    )
+    return _safe_fallback_result("Gemini failed", is_error=True, ai_provider="gemini_failed")
     
+def _apply_keyword_job_fallback(result, email_subject, job_openings):
+    """If AI did not match a job, try free subject keyword match."""
+    if result and result.get("job_opening"):
+        return result
+    keyword = match_job_opening_from_subject(email_subject, job_openings)
+    return keyword or result
+
+
 def match_job_opening_hybrid(email_subject, email_body, job_openings, resume_data=None):
+    """Job match using ATS Settings ai_mode: gemini | hybrid | ollama (deprecated)."""
 
-    mode = frappe.db.get_single_value("ATS Settings", "ai_mode") or frappe.conf.get("ai_mode", "hybrid")
+    # Caller should use match_job_opening_for_email(); keep keyword-first here as safety net.
+    keyword = match_job_opening_from_subject(email_subject, job_openings, email_body)
+    if keyword:
+        return keyword
 
-    # ✅ Direct Gemini mode
-    if mode == "gemini":
-        return match_job_opening_with_gemini(
-            email_subject, email_body, job_openings, resume_data
+    mode = frappe.db.get_single_value("ATS Settings", "ai_mode") or frappe.conf.get("ai_mode", "gemini")
+
+    if mode in ("ollama", "hybrid"):
+        # Keep backward compatibility for old settings values while avoiding Ollama instability.
+        frappe.logger().warning(
+            f"ai_mode '{mode}' requested; routing to Gemini-only matcher"
         )
 
-    # ✅ Direct Ollama mode
-    if mode == "ollama":
-        if is_ollama_available():
-            return match_job_opening_with_ai(
-                email_subject, email_body, job_openings, resume_data
-            )
-        return _safe_fallback_result("Ollama not available")
-
-    # ✅ Hybrid mode (default)
-    try:
-        if is_ollama_available():
-            ollama_result = match_job_opening_with_ai(
-                email_subject, email_body, job_openings, resume_data
-            )
-        else:
-            ollama_result = _safe_fallback_result("Ollama not available")
-    except Exception:
-        frappe.log_error("Ollama crash", frappe.get_traceback())
-        ollama_result = _safe_fallback_result("Ollama crash")
-
-    # ✅ Fallback condition (strict): use Gemini only when Ollama cannot match any job
-    should_fallback = not ollama_result.get("job_opening")
+    result = match_job_opening_with_gemini(
+        email_subject, email_body, job_openings, resume_data
+    )
+    return _apply_keyword_job_fallback(result, email_subject, job_openings)
     
-    if should_fallback:
-        # (Optional) Yahan aap ek Frappe Email/Notification trigger karwa sakte hain 
-        # khudko warn karne ke liye ki "Ollama is down, billing is happening!"
-        frappe.log_error("Ollama server down! Falling back to paid Gemini API.", "Billing Alert")
-        
-        gemini_result = match_job_opening_with_gemini(
-            email_subject, email_body, job_openings, resume_data
-        )
-        return gemini_result
-
-    # gemini_result = None
-
-    # if should_fallback:
-    #     frappe.log_error("Ollama server down! Falling back to paid Gemini API.", "Billing Alert")
-    #     gemini_result = match_job_opening_with_gemini(
-    #         email_subject, email_body, job_openings, resume_data
-    #     )
-
-    # # ✅ Final decision
-    # final_result = gemini_result if (
-    #     gemini_result and gemini_result.get("score", 0) > ollama_result.get("score", 0)
-    # ) else ollama_result
-
-    return final_result
-    
-
-@frappe.whitelist(allow_guest=True)
-def check_ollama_health():
-    """Check if local Ollama server and model are available."""
-    try:
-        client = get_ollama_client()
-        response = client.list()
-        
-        # ✅ Handle ollama library Pydantic response structure
-        # response.models is a list of Model objects, not dicts
-        model_names = []
-        if hasattr(response, "models"):
-            for m in response.models:
-                # Model objects have .name or .model attribute
-                name = getattr(m, "name", None) or getattr(m, "model", None) or str(m)
-                model_names.append(name)
-        elif isinstance(response, (list, tuple)):
-            # Fallback for older library versions
-            for m in response:
-                if isinstance(m, dict):
-                    model_names.append(m.get("name") or m.get("model") or "unknown")
-                else:
-                    model_names.append(getattr(m, "name", None) or getattr(m, "model", None) or str(m))
-        
-        frappe.log_error(
-            title="Ollama Models Detected",
-            message=f"Found models: {model_names}"
-        )
-
-        if OLLAMA_MODEL in model_names:
-            return {
-                "status": "ok",
-                "model": OLLAMA_MODEL,
-                "available_models": model_names,
-                "host": "localhost"
-            }
-            
-        return {
-            "status": "warning",
-            "message": f"Model '{OLLAMA_MODEL}' not found. Available: {model_names}",
-            "available_models": model_names,
-            "host": "localhost"
-        }
-        
-    except Exception as e:
-        frappe.log_error(
-            title="Ollama Health Check Failed",
-            message=f"{type(e).__name__}: {str(e)}\n{frappe.get_traceback()}"
-        )
-        return {
-            "status": "error",
-            "message": f"{type(e).__name__}: {str(e)}",
-            "host": "localhost"
-        }

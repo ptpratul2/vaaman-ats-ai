@@ -1,3 +1,7 @@
+from resume.api.parse_guards import (
+    applicant_exists_for_job,
+    should_skip_file_for_job,
+)
 from resume.resume.doctype.pdf_upload.pdf_upload import (
     _extract_and_parse_file,
     reset_gemini_retry_counter,
@@ -7,15 +11,142 @@ from vaaman_ats_ai.api.resume.resume import (
     calculate_experience_years,
     flatten_resume_data,
     create_resume_from_upload,
-    match_job_opening_hybrid
+    get_active_job_openings_cached,
+    match_job_opening_for_email,
 )
 
+import email.utils
 import os
 import json
 import frappe
 import re
 
 CAREER_EMAIL_SOURCE = "Career Email"
+EMAIL_BATCH_SIZE = 50
+STALE_PROCESSING_MINUTES = 30
+MAX_LONG_QUEUE_BEFORE_ENQUEUE = 40
+
+
+def _long_queue_depth():
+    try:
+        from frappe.utils.background_jobs import get_queue
+        return len(get_queue("long"))
+    except Exception:
+        return 0
+
+
+def _effective_batch_size():
+    """Do not flood the long queue while the worker is still draining."""
+    depth = _long_queue_depth()
+    if depth >= MAX_LONG_QUEUE_BEFORE_ENQUEUE:
+        return 0
+    return min(EMAIL_BATCH_SIZE, MAX_LONG_QUEUE_BEFORE_ENQUEUE - depth)
+
+
+def _extract_email_address(raw):
+    if not raw:
+        return ""
+    _, addr = email.utils.parseaddr(raw)
+    return (addr or str(raw)).strip().lower()
+
+
+def _recover_stale_processing_locks():
+    """Unlock emails stuck in custom_processing after worker crash."""
+    cutoff = frappe.utils.add_to_date(
+        frappe.utils.now(), minutes=-STALE_PROCESSING_MINUTES
+    )
+    stale = frappe.get_all(
+        "Communication",
+        filters={
+            "custom_processing": 1,
+            "custom_processed": 0,
+            "modified": ["<", cutoff],
+        },
+        pluck="name",
+    )
+    for name in stale:
+        frappe.db.set_value(
+            "Communication", name, {"custom_processing": 0}
+        )
+    if stale:
+        frappe.db.commit()
+    return len(stale)
+
+
+def _ensure_db_connection():
+    """Reconnect MySQL after long Ollama/Gemini calls (wait_timeout)."""
+    try:
+        frappe.db.sql("SELECT 1")
+    except Exception:
+        try:
+            frappe.db.close()
+        except Exception:
+            pass
+        frappe.db.connect(reconnect=True)
+
+
+def _mark_communication_processed(communication_name):
+    frappe.db.set_value(
+        "Communication",
+        communication_name,
+        {"custom_processed": 1, "custom_processing": 0},
+    )
+    frappe.db.commit()
+
+
+def _is_email_reply(comm_doc):
+    subject = (comm_doc.subject or "").strip().lower()
+    if comm_doc.in_reply_to:
+        return True
+    return subject.startswith(("re:", "fwd:", "fw:"))
+
+
+def _get_skip_reason_for_job(comm_doc, sender_email, job_opening):
+    """Skip only when the same candidate already applied for this job opening."""
+    if not job_opening or not sender_email:
+        return ""
+
+    if not applicant_exists_for_job(sender_email, job_opening):
+        return ""
+
+    if _is_email_reply(comm_doc):
+        return "reply_same_job_already_applied"
+    return "duplicate_sender_same_job"
+
+
+def _filter_attachments_needing_parse(valid_files, job_opening=None):
+    """Return attachments not yet imported for this specific job opening."""
+    pending = []
+    skipped_existing_attachment = 0
+    for f in valid_files:
+        attachment_filters = {"resume_attachment": f.file_url}
+        if job_opening:
+            attachment_filters["job_title"] = job_opening
+            if frappe.db.exists("Job Applicant", attachment_filters):
+                skipped_existing_attachment += 1
+                continue
+        try:
+            file_doc = frappe.get_doc("File", {"file_url": f.file_url})
+        except Exception:
+            pending.append(f)
+            continue
+        if job_opening and should_skip_file_for_job(
+            f.file_url, file_doc.content_hash, job_opening
+        ):
+            skipped_existing_attachment += 1
+            continue
+        pending.append(f)
+    return pending, skipped_existing_attachment
+
+
+def _log_email_parse_audit(communication_name, **counts):
+    frappe.log_error(
+        title="Email Parse Audit",
+        message="\n".join(
+            [f"Communication: {communication_name}"]
+            + [f"{key}: {value}" for key, value in counts.items()]
+        ),
+    )
 
 
 def _ensure_career_email_source():
@@ -78,11 +209,24 @@ def _map_highest_qualification(degree_text):
 
 def clean_phone_numbers(phone):
     if not phone:
-        return [], ""
+        return "", ""
 
     # Convert list to string if AI returns array
     if isinstance(phone, list):
-        phone = ",".join(phone)
+        normalized = []
+        for p in phone:
+            if isinstance(p, dict):
+                normalized.append(
+                    str(
+                        p.get("phone")
+                        or p.get("number")
+                        or p.get("value")
+                        or ""
+                    )
+                )
+            else:
+                normalized.append(str(p or ""))
+        phone = ",".join(normalized)
 
     # Split multiple numbers
     numbers = re.split(r"[,\n;/]+", str(phone))
@@ -103,11 +247,24 @@ def clean_phone_numbers(phone):
     first_number = valid_numbers[0] if valid_numbers else ""
     remaining_numbers = ", ".join(valid_numbers[1:]) if len(valid_numbers) > 1 else ""
 
-    return first_number, remaining_numbers
+    return str(first_number or ""), str(remaining_numbers or "")
 
 
-@frappe.whitelist(allow_guest=True)
+def _normalize_scalar(value):
+    """Ensure Document fields never receive list/dict types."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=True)
+    return str(value)
+
+
+@frappe.whitelist()
 def fetch_email_resumes():
+    if frappe.session.user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    _recover_stale_processing_locks()
 
     # ✅ Get configured email account
     email_account = (
@@ -126,6 +283,23 @@ def fetch_email_resumes():
         }
 
     # ✅ Fetch only limited unprocessed emails
+    prioritize_new = frappe.db.get_single_value(
+        "ATS Settings", "prioritize_new_emails_first"
+    )
+    if prioritize_new is None:
+        prioritize_new = 1
+
+    order_by = "communication_date desc" if prioritize_new else "communication_date asc"
+
+    batch_size = _effective_batch_size()
+    if batch_size <= 0:
+        return {
+            "status": "success",
+            "message": "Long queue full — waiting for worker to drain",
+            "queued": 0,
+            "long_queue_depth": _long_queue_depth(),
+        }
+
     communications = frappe.get_all(
         "Communication",
         filters={
@@ -135,9 +309,9 @@ def fetch_email_resumes():
             "custom_processed": 0,
             "custom_processing": 0
         },
-        fields=["name", "subject", "sender"],
-        limit_page_length=10,
-        order_by="creation desc"
+        fields=["name", "subject", "sender", "communication_date"],
+        limit_page_length=batch_size,
+        order_by=order_by
     )
 
     if not communications:
@@ -146,37 +320,36 @@ def fetch_email_resumes():
             "message": "No new emails found"
         }
 
-    # ✅ Fetch active job openings once
-    active_job_openings = frappe.get_all(
-        "Job Opening",
-        filters={"status": "Open"},
-        fields=["name", "job_title", "department", "description"]
-    )
-
     queued = 0
 
     for comm in communications:
         try:
-            # ✅ Lock record immediately
-            frappe.db.set_value(
-                "Communication",
-                comm.name,
-                "custom_processing",
-                1
-            )
-
-            frappe.db.commit()
-            
             frappe.enqueue(
                 "vaaman_ats_ai.api.email.fetch_resumes.process_single_email_resume",
                 queue="long",
                 communication_name=comm.name,
-                job_openings=active_job_openings
+                job_id=f"email_resume_{comm.name}",
+                deduplicate=True,
+                timeout=600,
             )
 
+            frappe.db.set_value(
+                "Communication",
+                comm.name,
+                "custom_processing",
+                1,
+            )
+            frappe.db.commit()
             queued += 1
 
         except Exception:
+            frappe.db.set_value(
+                "Communication",
+                comm.name,
+                "custom_processing",
+                0,
+            )
+            frappe.db.commit()
             frappe.log_error(
                 title="Queue Resume Processing Failed",
                 message=frappe.get_traceback()
@@ -184,13 +357,17 @@ def fetch_email_resumes():
 
     return {
         "status": "success",
-        "queued": queued
+        "queued": queued,
+        "prioritize_new_emails_first": bool(prioritize_new),
+        "order_by": order_by,
+        "long_queue_depth": _long_queue_depth(),
     }
 
 
 def process_single_email_resume(communication_name, job_openings=None):
 
     try:
+        _ensure_db_connection()
         _ensure_career_email_source()
         if not frappe.db.exists("Communication", communication_name):
             frappe.log_error(
@@ -217,14 +394,15 @@ def process_single_email_resume(communication_name, job_openings=None):
             fields=["name", "file_url", "file_name"]
         )
 
-        # ✅ Delete emails without attachments
+        # ✅ Mark emails without attachments (do not delete — keep audit trail)
         if not files:
-            frappe.delete_doc(
-                "Communication",
+            _log_email_parse_audit(
                 communication_name,
-                ignore_permissions=True
+                skip_reason="no_attachments",
+                parsed=0,
+                gemini_retries=0,
             )
-            frappe.db.commit()
+            _mark_communication_processed(communication_name)
             return
 
         # ✅ Filter valid resume files
@@ -234,40 +412,38 @@ def process_single_email_resume(communication_name, job_openings=None):
         ]
 
         if not valid_files:
-            frappe.delete_doc(
-                "Communication",
+            _log_email_parse_audit(
                 communication_name,
-                ignore_permissions=True
+                skip_reason="no_valid_resume_attachment",
+                parsed=0,
+                gemini_retries=0,
             )
-            frappe.db.commit()
+            _mark_communication_processed(communication_name)
             return
 
         # Parse audit counters
         parsed_count = 0
         skipped_existing_attachment = 0
         skipped_duplicate_email = 0
+        skipped_duplicate_same_job = 0
+        skipped_reply_same_job = 0
         gemini_retries_total = 0
 
-        # ✅ Do job matching once per email (not once per attachment)
-        matched_job_id = None
+        sender_email = _extract_email_address(comm_doc.sender)
+
+        if not job_openings:
+            job_openings = get_active_job_openings_cached()
+
+        # Job matching: keyword/cache first, then AI on top-N jobs only (not one RQ job per opening)
+        matched_job_id = match_job_opening_for_email(
+            email_subject=email_subject,
+            email_body=email_body,
+            job_openings=job_openings,
+        )
+        _ensure_db_connection()
         selected_job_name = None
         selected_job_title = None
         selected_job_desc = None
-        # Optimization: if only one open job exists, skip AI matching call entirely.
-        if job_openings and len(job_openings) == 1:
-            matched_job_id = {
-                "job_opening": job_openings[0].get("name"),
-                "confidence": "high",
-                "fit_level": "Unable to Assess",
-                "score": 0,
-                "justification": "Single active job opening auto-mapped",
-            }
-        elif job_openings:
-            matched_job_id = match_job_opening_hybrid(
-                email_subject=email_subject,
-                email_body=email_body,
-                job_openings=job_openings
-            )
 
         # Use matched job context for resume parsing/scoring prompt.
         if isinstance(matched_job_id, dict):
@@ -279,23 +455,71 @@ def process_single_email_resume(communication_name, job_openings=None):
                     selected_job_desc = job.get("description")
                     break
 
-        frappe.log_error(
-            title="AI Job Matching",
-            message=f"""
-                    Email Subject: {email_subject}
-
-                    Matched Job:
-                    {matched_job_id}
-                    """
+        provider = (matched_job_id or {}).get("ai_provider", "")
+        api_failed = bool((matched_job_id or {}).get("api_failed"))
+        if api_failed:
+            frappe.log_error(
+                title="AI Job Matching",
+                message=(
+                    f"Email Subject: {email_subject}\n"
+                    f"Sender: {sender_email}\n"
+                    f"AI provider: {provider}\n"
+                    f"Matched Job: {matched_job_id}"
+                ),
+            )
+        else:
+            frappe.logger().info(
+                f"Job match ({provider}): {email_subject[:80]} -> "
+                f"{(matched_job_id or {}).get('job_opening')}"
+            )
+        skip_reason = _get_skip_reason_for_job(
+            comm_doc, sender_email, selected_job_name
         )
+        if skip_reason:
+            if skip_reason == "duplicate_sender_same_job":
+                skipped_duplicate_same_job = 1
+            elif skip_reason == "reply_same_job_already_applied":
+                skipped_reply_same_job = 1
+            _log_email_parse_audit(
+                communication_name,
+                skip_reason=skip_reason,
+                sender_email=sender_email or "(unknown)",
+                matched_job=selected_job_name or "(none)",
+                parsed=0,
+                skipped_existing_attachment=0,
+                skipped_duplicate_email=0,
+                skipped_duplicate_same_job=skipped_duplicate_same_job,
+                skipped_reply_same_job=skipped_reply_same_job,
+                gemini_retries=0,
+            )
+            _mark_communication_processed(communication_name)
+            return
 
-        # ✅ Process each attachment
-        for f in valid_files:
+        attachments_to_parse, skipped_existing_attachment = _filter_attachments_needing_parse(
+            valid_files, selected_job_name
+        )
+        if not attachments_to_parse:
+            _log_email_parse_audit(
+                communication_name,
+                skip_reason="all_attachments_already_processed_for_job",
+                sender_email=sender_email or "(unknown)",
+                matched_job=selected_job_name or "(none)",
+                parsed=0,
+                skipped_existing_attachment=skipped_existing_attachment,
+                skipped_duplicate_email=0,
+                skipped_duplicate_same_job=0,
+                skipped_reply_same_job=0,
+                gemini_retries=0,
+            )
+            _mark_communication_processed(communication_name)
+            return
+
+        # ✅ Process only attachments that still need parsing for this job
+        for f in attachments_to_parse:
 
             try:
-                # Skip expensive parsing if this attachment was already processed earlier.
-                if frappe.db.exists("Job Applicant", {"resume_attachment": f.file_url}):
-                    skipped_existing_attachment += 1
+                if applicant_exists_for_job(sender_email, selected_job_name):
+                    skipped_duplicate_same_job += 1
                     continue
 
                 # ✅ Get file path
@@ -322,9 +546,10 @@ def process_single_email_resume(communication_name, job_openings=None):
 
                 api_key = frappe.conf.get("gemini_api_key")
 
-                # ✅ Parse Resume
+                # ✅ Parse Resume (reconnect DB — Ollama may have held the job for minutes)
+                _ensure_db_connection()
                 reset_gemini_retry_counter()
-                _fu, applicant_data, err = _extract_and_parse_file((
+                _fu, _fname, applicant_data, err = _extract_and_parse_file((
                     file_path,
                     f.file_url,
                     selected_job_title,
@@ -363,16 +588,17 @@ def process_single_email_resume(communication_name, job_openings=None):
                     or applicant_data.get("full_name")
                 )
 
-                email_value = applicant_data.get("email")
+                email_value = (applicant_data.get("email") or "").strip().lower()
 
                 if not applicant_name or not email_value:
+                    gemini_retries_total += get_gemini_retry_counter()
                     continue
 
-                # ✅ Skip duplicate applicants
-                if frappe.db.exists(
-                    "Job Applicant",
-                    {"email_id": email_value}
-                ):
+                # ✅ Skip duplicate for same job (post-parse safety net)
+                duplicate_filters = {"email_id": email_value}
+                if selected_job_name:
+                    duplicate_filters["job_title"] = selected_job_name
+                if frappe.db.exists("Job Applicant", duplicate_filters):
                     gemini_retries_total += get_gemini_retry_counter()
                     skipped_duplicate_email += 1
                     continue
@@ -405,6 +631,7 @@ def process_single_email_resume(communication_name, job_openings=None):
                 )
 
                 # ✅ Create Job Applicant
+                _ensure_db_connection()
                 applicant = frappe.get_doc({
                     "doctype": "Job Applicant",
                     "applicant_name": applicant_name,
@@ -416,8 +643,8 @@ def process_single_email_resume(communication_name, job_openings=None):
                     "source_of_job_posting": "Company Website",
                     "position_applied_for": selected_job_title or "",
                     # "phone_number": applicant_data.get("phone", ""),
-                    "phone_number": clean_phone,
-                    "custom_phone_number_2": other_phones,
+                    "phone_number": _normalize_scalar(clean_phone),
+                    "custom_phone_number_2": _normalize_scalar(other_phones),
                     "applicant_rating": applicant_rating or 0,
                     "score": score or 0,
                     "fit_level": fit_level,
@@ -480,31 +707,23 @@ def process_single_email_resume(communication_name, job_openings=None):
                     message=frappe.get_traceback()
                 )
 
-        frappe.log_error(
-            title="Email Parse Audit",
-            message=(
-                f"Communication: {communication_name}\n"
-                f"Parsed: {parsed_count}\n"
-                f"Skipped existing attachment: {skipped_existing_attachment}\n"
-                f"Skipped duplicate email: {skipped_duplicate_email}\n"
-                f"Gemini retries: {gemini_retries_total}"
-            ),
-        )
-
-        # ✅ Mark email processed
-        frappe.db.set_value(
-            "Communication",
+        _log_email_parse_audit(
             communication_name,
-            {
-                "custom_processed": 1,
-                "custom_processing": 0
-            }
+            matched_job=selected_job_name or "(none)",
+            parsed=parsed_count,
+            skipped_existing_attachment=skipped_existing_attachment,
+            skipped_duplicate_email=skipped_duplicate_email,
+            skipped_duplicate_same_job=skipped_duplicate_same_job,
+            skipped_reply_same_job=skipped_reply_same_job,
+            gemini_retries=gemini_retries_total,
         )
 
-        frappe.db.commit()
+        _ensure_db_connection()
+        _mark_communication_processed(communication_name)
 
     except Exception:
 
+        _ensure_db_connection()
         if frappe.db.exists("Communication", communication_name):
 
             frappe.db.set_value(

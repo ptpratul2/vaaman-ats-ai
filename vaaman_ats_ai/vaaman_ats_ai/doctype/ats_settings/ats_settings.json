@@ -6,9 +6,13 @@
  "engine": "InnoDB",
  "field_order": [
   "career_email_account",
+  "email_parsing_section",
+  "prioritize_new_emails_first",
+  "email_parsing_help",
   "ollama_host",
   "ollama_model",
   "ai_mode",
+  "gemini_model",
   "gemini_api_key",
   "host_name"
  ],
@@ -29,7 +33,14 @@
    "fieldname": "ai_mode",
    "fieldtype": "Select",
    "label": "Ai Mode",
+   "description": "Use gemini for stable production matching. hybrid/ollama are kept only for backward compatibility.",
    "options": "\nhybrid\ngemini\nollama"
+  },
+  {
+   "default": "gemini-2.5-flash",
+   "fieldname": "gemini_model",
+   "fieldtype": "Data",
+   "label": "Gemini Model"
   },
   {
    "fieldname": "gemini_api_key",
@@ -47,6 +58,23 @@
    "fieldtype": "Link",
    "label": "Career Email Account",
    "options": "Email Account"
+  },
+  {
+   "fieldname": "email_parsing_section",
+   "fieldtype": "Section Break",
+   "label": "Email Resume Parsing"
+  },
+  {
+   "default": "1",
+   "fieldname": "prioritize_new_emails_first",
+   "fieldtype": "Check",
+   "label": "Parse New Emails First"
+  },
+  {
+   "fieldname": "email_parsing_help",
+   "fieldtype": "HTML",
+   "label": "Email Parsing Help",
+   "options": "<p class=\"text-muted\">When enabled, unprocessed career emails are parsed by <b>Communication Date</b> (newest first). Turn off to process the oldest backlog first.</p>"
   }
  ],
  "grid_page_length": 50,
