@@ -183,7 +183,7 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        "*/10 * * * *": [
+        "*/1 * * * *": [
             "vaaman_ats_ai.api.email.fetch_resumes.fetch_email_resumes"
         ]
     }

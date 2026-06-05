@@ -25,6 +25,7 @@ CAREER_EMAIL_SOURCE = "Career Email"
 EMAIL_BATCH_SIZE = 50
 STALE_PROCESSING_MINUTES = 30
 MAX_LONG_QUEUE_BEFORE_ENQUEUE = 40
+MIN_EMAIL_BATCH_WHEN_BACKLOG = 5
 
 
 def _long_queue_depth():
@@ -36,11 +37,20 @@ def _long_queue_depth():
 
 
 def _effective_batch_size():
-    """Do not flood the long queue while the worker is still draining."""
+    """
+    Keep ingesting fresh emails even when backlog exists.
+
+    A hard stop (batch=0) can freeze new intake for long periods, so keep a
+    small reserved intake window.
+    """
     depth = _long_queue_depth()
-    if depth >= MAX_LONG_QUEUE_BEFORE_ENQUEUE:
-        return 0
-    return min(EMAIL_BATCH_SIZE, MAX_LONG_QUEUE_BEFORE_ENQUEUE - depth)
+    available_slots = MAX_LONG_QUEUE_BEFORE_ENQUEUE - depth
+    if available_slots <= 0:
+        return min(EMAIL_BATCH_SIZE, MIN_EMAIL_BATCH_WHEN_BACKLOG)
+    return min(
+        EMAIL_BATCH_SIZE,
+        max(MIN_EMAIL_BATCH_WHEN_BACKLOG, available_slots),
+    )
 
 
 def _extract_email_address(raw):
@@ -330,6 +340,7 @@ def fetch_email_resumes():
                 communication_name=comm.name,
                 job_id=f"email_resume_{comm.name}",
                 deduplicate=True,
+                at_front=True,
                 timeout=600,
             )
 
