@@ -452,3 +452,13 @@ def search_candidates(filters=None):
 #             continue
 
 #     return results
+
+
+@frappe.whitelist(allow_guest=True)
+def get_designations():
+    return frappe.get_all(
+        "Designation",
+        pluck="name",
+        order_by="name asc",
+        limit_page_length=0,  # saare designations
+    )

@@ -26,6 +26,8 @@ EMAIL_BATCH_SIZE = 50
 STALE_PROCESSING_MINUTES = 30
 MAX_LONG_QUEUE_BEFORE_ENQUEUE = 40
 MIN_EMAIL_BATCH_WHEN_BACKLOG = 5
+AI_PAUSE_CACHE_KEY = "vaaman_ats_ai:resume_ai_pause_until_epoch"
+AI_PAUSE_MINUTES_ON_CAP = 30
 
 
 def _long_queue_depth():
@@ -58,6 +60,45 @@ def _extract_email_address(raw):
         return ""
     _, addr = email.utils.parseaddr(raw)
     return (addr or str(raw)).strip().lower()
+
+
+def _contains_ai_capacity_error(message):
+    if not message:
+        return False
+    text = str(message).lower()
+    markers = (
+        "monthly spending cap",
+        "resource_exhausted",
+        "quota",
+        "429",
+        "rate limit",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _get_ai_pause_remaining_seconds():
+    raw = frappe.cache().get_value(AI_PAUSE_CACHE_KEY)
+    if not raw:
+        return 0
+    try:
+        until_epoch = float(raw)
+    except Exception:
+        return 0
+    now_epoch = frappe.utils.now_datetime().timestamp()
+    return max(0, int(until_epoch - now_epoch))
+
+
+def _pause_ai_ingestion(minutes=AI_PAUSE_MINUTES_ON_CAP):
+    until_dt = frappe.utils.add_to_date(
+        frappe.utils.now_datetime(), minutes=minutes, as_datetime=True
+    )
+    until_epoch = int(until_dt.timestamp())
+    frappe.cache().set_value(
+        AI_PAUSE_CACHE_KEY,
+        until_epoch,
+        expires_in_sec=max(60, int(minutes * 60)),
+    )
+    return until_epoch
 
 
 def _recover_stale_processing_locks():
@@ -100,6 +141,15 @@ def _mark_communication_processed(communication_name):
         "Communication",
         communication_name,
         {"custom_processed": 1, "custom_processing": 0},
+    )
+    frappe.db.commit()
+
+
+def _release_communication_for_retry(communication_name):
+    frappe.db.set_value(
+        "Communication",
+        communication_name,
+        {"custom_processed": 0, "custom_processing": 0},
     )
     frappe.db.commit()
 
@@ -269,12 +319,65 @@ def _normalize_scalar(value):
     return str(value)
 
 
+def _find_existing_applicant_for_resume(email_id, resume_attachment):
+    if not email_id or not resume_attachment:
+        return None
+    rows = frappe.get_all(
+        "Job Applicant",
+        filters={
+            "email_id": email_id,
+            "resume_attachment": resume_attachment,
+        },
+        fields=["name", "job_title"],
+        limit_page_length=1,
+        order_by="creation asc",
+    )
+    return rows[0] if rows else None
+
+
+def _get_career_email_account():
+    return (
+        frappe.db.get_single_value("ATS Settings", "career_email_account")
+        or frappe.conf.get("email_account")
+    )
+
+
+def _parse_names_arg(communication_names):
+    if isinstance(communication_names, str):
+        try:
+            communication_names = frappe.parse_json(communication_names)
+        except Exception:
+            communication_names = []
+    if not isinstance(communication_names, list):
+        return []
+    cleaned = []
+    seen = set()
+    for name in communication_names:
+        if not isinstance(name, str):
+            continue
+        value = name.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
 @frappe.whitelist()
 def fetch_email_resumes():
     if frappe.session.user == "Guest":
         frappe.throw("Not permitted", frappe.PermissionError)
 
     _recover_stale_processing_locks()
+    pause_remaining = _get_ai_pause_remaining_seconds()
+    if pause_remaining > 0:
+        return {
+            "status": "paused",
+            "message": "AI parsing temporarily paused due to spend/quota limit",
+            "retry_in_seconds": pause_remaining,
+            "queued": 0,
+            "long_queue_depth": _long_queue_depth(),
+        }
 
     # ✅ Get configured email account
     email_account = (
@@ -375,6 +478,84 @@ def fetch_email_resumes():
     }
 
 
+@frappe.whitelist()
+def enqueue_selected_email_resumes(communication_names, force_reprocess=1):
+    if frappe.session.user == "Guest":
+        frappe.throw("Not permitted", frappe.PermissionError)
+
+    names = _parse_names_arg(communication_names)
+    if not names:
+        return {"status": "error", "message": "No communication selected", "queued": 0}
+
+    email_account = _get_career_email_account()
+    if not email_account:
+        frappe.log_error(
+            title="Email Account Not Configured",
+            message="Career email account not configured in ATS Settings.",
+        )
+        return {"status": "error", "message": "Email account not configured", "queued": 0}
+
+    force_reprocess = int(force_reprocess or 0) == 1
+    communications = frappe.get_all(
+        "Communication",
+        filters={
+            "name": ["in", names],
+            "communication_type": "Communication",
+            "sent_or_received": "Received",
+            "email_account": email_account,
+        },
+        fields=["name", "custom_processed", "custom_processing"],
+    )
+    found_names = {row.name for row in communications}
+
+    queued = 0
+    skipped_processing = 0
+    skipped_already_processed = 0
+    enqueue_errors = 0
+    for comm in communications:
+        if comm.custom_processing:
+            skipped_processing += 1
+            continue
+        if comm.custom_processed and not force_reprocess:
+            skipped_already_processed += 1
+            continue
+        try:
+            if force_reprocess and comm.custom_processed:
+                frappe.db.set_value("Communication", comm.name, "custom_processed", 0)
+
+            frappe.enqueue(
+                "vaaman_ats_ai.api.email.fetch_resumes.process_single_email_resume",
+                queue="long",
+                communication_name=comm.name,
+                job_id=f"email_resume_{comm.name}",
+                deduplicate=True,
+                at_front=True,
+                timeout=600,
+            )
+            frappe.db.set_value("Communication", comm.name, "custom_processing", 1)
+            frappe.db.commit()
+            queued += 1
+        except Exception:
+            enqueue_errors += 1
+            frappe.db.set_value("Communication", comm.name, "custom_processing", 0)
+            frappe.db.commit()
+            frappe.log_error(
+                title="Queue Selected Resume Processing Failed",
+                message=frappe.get_traceback(),
+            )
+
+    return {
+        "status": "success",
+        "queued": queued,
+        "selected": len(names),
+        "not_found_or_not_allowed": len(names) - len(found_names),
+        "skipped_processing": skipped_processing,
+        "skipped_already_processed": skipped_already_processed,
+        "enqueue_errors": enqueue_errors,
+        "long_queue_depth": _long_queue_depth(),
+    }
+
+
 def process_single_email_resume(communication_name, job_openings=None):
 
     try:
@@ -439,6 +620,7 @@ def process_single_email_resume(communication_name, job_openings=None):
         skipped_duplicate_same_job = 0
         skipped_reply_same_job = 0
         gemini_retries_total = 0
+        ai_temporarily_unavailable = False
 
         sender_email = _extract_email_address(comm_doc.sender)
 
@@ -574,9 +756,13 @@ def process_single_email_resume(communication_name, job_openings=None):
                     try:
                         applicant_data = json.loads(applicant_data)
                     except Exception:
+                        if _contains_ai_capacity_error(err):
+                            ai_temporarily_unavailable = True
                         continue
 
                 if err or not applicant_data:
+                    if _contains_ai_capacity_error(err):
+                        ai_temporarily_unavailable = True
                     gemini_retries_total += get_gemini_retry_counter()
                     continue
 
@@ -603,6 +789,31 @@ def process_single_email_resume(communication_name, job_openings=None):
 
                 if not applicant_name or not email_value:
                     gemini_retries_total += get_gemini_retry_counter()
+                    continue
+
+                # ✅ Avoid duplicate applicant creation when same communication
+                # gets re-run with identical resume attachment.
+                existing_resume_applicant = _find_existing_applicant_for_resume(
+                    email_value, f.file_url
+                )
+                if existing_resume_applicant:
+                    # If older row has no job but current run matched one,
+                    # enrich that existing applicant instead of creating a duplicate.
+                    if (
+                        selected_job_name
+                        and not existing_resume_applicant.get("job_title")
+                    ):
+                        frappe.db.set_value(
+                            "Job Applicant",
+                            existing_resume_applicant["name"],
+                            {
+                                "job_title": selected_job_name,
+                                "position_applied_for": selected_job_title or "",
+                            },
+                        )
+                        frappe.db.commit()
+                    gemini_retries_total += get_gemini_retry_counter()
+                    skipped_duplicate_email += 1
                     continue
 
                 # ✅ Skip duplicate for same job (post-parse safety net)
@@ -713,23 +924,47 @@ def process_single_email_resume(communication_name, job_openings=None):
                     )
 
             except Exception:
+                trace = frappe.get_traceback()
+                if _contains_ai_capacity_error(trace):
+                    ai_temporarily_unavailable = True
                 frappe.log_error(
                     title="Resume Processing Failed",
-                    message=frappe.get_traceback()
+                    message=trace
                 )
+
+        should_retry_for_ai = (
+            parsed_count == 0
+            and ai_temporarily_unavailable
+            and skipped_existing_attachment == 0
+            and skipped_duplicate_email == 0
+            and skipped_duplicate_same_job == 0
+            and skipped_reply_same_job == 0
+        )
+        if should_retry_for_ai:
+            _pause_ai_ingestion()
+
+        audit_kwargs = {
+            "matched_job": selected_job_name or "(none)",
+            "parsed": parsed_count,
+            "skipped_existing_attachment": skipped_existing_attachment,
+            "skipped_duplicate_email": skipped_duplicate_email,
+            "skipped_duplicate_same_job": skipped_duplicate_same_job,
+            "skipped_reply_same_job": skipped_reply_same_job,
+            "gemini_retries": gemini_retries_total,
+        }
+        if should_retry_for_ai:
+            audit_kwargs["skip_reason"] = "ai_temporarily_unavailable"
+            audit_kwargs["deferred_retry"] = 1
 
         _log_email_parse_audit(
             communication_name,
-            matched_job=selected_job_name or "(none)",
-            parsed=parsed_count,
-            skipped_existing_attachment=skipped_existing_attachment,
-            skipped_duplicate_email=skipped_duplicate_email,
-            skipped_duplicate_same_job=skipped_duplicate_same_job,
-            skipped_reply_same_job=skipped_reply_same_job,
-            gemini_retries=gemini_retries_total,
+            **audit_kwargs,
         )
 
         _ensure_db_connection()
+        if should_retry_for_ai:
+            _release_communication_for_retry(communication_name)
+            return
         _mark_communication_processed(communication_name)
 
     except Exception:
@@ -750,3 +985,118 @@ def process_single_email_resume(communication_name, job_openings=None):
             title="Email Resume Fetch Failed",
             message=frappe.get_traceback()
         )
+        
+#This function is for executer to fetch only recent emails (last 30 days) to avoid processing a large backlog of old emails when the system is first set up or after a long downtime. It can be scheduled to run daily until the backlog is cleared, then switch to the main fetch_email_resumes function for real-time processing.
+# @frappe.whitelist(allow_guest=True)
+# def fetch_recent_email_resumes():
+#     """Fetches and queues email resumes received ONLY within the last 30 days."""
+#     # if frappe.session.user == "Guest":
+#     #     frappe.throw("Not permitted", frappe.PermissionError)
+
+#     _recover_stale_processing_locks()
+
+#     # ✅ Get configured email account
+#     email_account = (
+#         frappe.db.get_single_value("ATS Settings", "career_email_account")
+#         or frappe.conf.get("email_account")
+#     )
+
+#     if not email_account:
+#         frappe.log_error(
+#             title="Email Account Not Configured",
+#             message="Career email account not configured in ATS Settings."
+#         )
+#         return {
+#             "status": "error",
+#             "message": "Email account not configured"
+#         }
+
+#     # ✅ Fetch only limited unprocessed emails
+#     prioritize_new = frappe.db.get_single_value(
+#         "ATS Settings", "prioritize_new_emails_first"
+#     )
+#     if prioritize_new is None:
+#         prioritize_new = 1
+
+#     order_by = "communication_date desc" if prioritize_new else "communication_date asc"
+
+#     batch_size = _effective_batch_size()
+#     if batch_size <= 0:
+#         return {
+#             "status": "success",
+#             "message": "Long queue full — waiting for worker to drain",
+#             "queued": 0,
+#             "long_queue_depth": _long_queue_depth(),
+#         }
+
+#     # ✅ Calculate the cutoff date (30 days ago)
+#     thirty_days_ago = frappe.utils.add_to_date(frappe.utils.now(), days=-30)
+
+#     # ✅ Add date filter to the query
+#     communications = frappe.get_all(
+#         "Communication",
+#         filters={
+#             "communication_type": "Communication",
+#             "sent_or_received": "Received",
+#             "email_account": email_account,
+#             "custom_processed": 0,
+#             "custom_processing": 0,
+#             "communication_date": [">=", thirty_days_ago]  # <-- 30-day window filter
+#         },
+#         fields=["name", "subject", "sender", "communication_date"],
+#         limit_page_length=batch_size,
+#         order_by=order_by
+#     )
+
+#     if not communications:
+#         return {
+#             "status": "success",
+#             "message": "No new emails found in the last 30 days"
+#         }
+
+#     queued = 0
+    
+#     return communications
+
+#     for comm in communications:
+#         try:
+#             frappe.enqueue(
+#                 "vaaman_ats_ai.api.email.fetch_resumes.process_single_email_resume",
+#                 queue="long",
+#                 communication_name=comm.name,
+#                 job_id=f"email_resume_{comm.name}",
+#                 deduplicate=True,
+#                 at_front=True,
+#                 timeout=600,
+#             )
+
+#             frappe.db.set_value(
+#                 "Communication",
+#                 comm.name,
+#                 "custom_processing",
+#                 1,
+#             )
+#             frappe.db.commit()
+#             queued += 1
+
+#         except Exception:
+#             frappe.db.set_value(
+#                 "Communication",
+#                 comm.name,
+#                 "custom_processing",
+#                 0,
+#             )
+#             frappe.db.commit()
+#             frappe.log_error(
+#                 title="Queue Resume Processing Failed",
+#                 message=frappe.get_traceback()
+#             )
+
+#     return {
+#         "status": "success",
+#         "queued": queued,
+#         "prioritize_new_emails_first": bool(prioritize_new),
+#         "order_by": order_by,
+#         "long_queue_depth": _long_queue_depth(),
+#         "time_window": "Last 30 Days"
+#     }
