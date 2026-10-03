@@ -146,6 +146,7 @@ def search_candidates(filters=None):
             min_exp, max_exp = max_exp, min_exp
 
         has_custom_exp = frappe.db.has_column("Job Applicant", "custom_experience_years")
+        has_custom_total_exp = frappe.db.has_column("Job Applicant", "custom_total_experience")
         has_custom_role = frappe.db.has_column("Job Applicant", "custom_current_role")
         has_custom_degree = frappe.db.has_column("Job Applicant", "custom_degree")
         has_custom_skills = frappe.db.has_column("Job Applicant", "custom_skills")
@@ -199,6 +200,7 @@ def search_candidates(filters=None):
         fields = ["name", "applicant_name", "resume_attachment", "email_id", "phone_number", "creation"]
         optional_fields = [
             ("custom_experience_years", has_custom_exp),
+            ("custom_total_experience", has_custom_total_exp),
             ("custom_skills", has_custom_skills),
             ("custom_current_role", has_custom_role),
             ("custom_degree", has_custom_degree),
@@ -225,6 +227,7 @@ def search_candidates(filters=None):
                     "name": row.get("name"),
                     "applicant_name": row.get("applicant_name"),
                     "custom_experience_years": row.get("custom_experience_years"),
+                    "custom_total_experience": row.get("custom_total_experience"),
                     "custom_skills": row.get("custom_skills"),
                     "custom_current_role": row.get("custom_current_role"),
                     "custom_degree": row.get("custom_degree"),
