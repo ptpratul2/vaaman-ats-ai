@@ -14,7 +14,14 @@
   "ai_mode",
   "gemini_model",
   "gemini_api_key",
-  "host_name"
+  "host_name",
+  "sso_section_section",
+  "prayog_base_url",
+  "enable_sync",
+  "sync_user_permissions",
+  "column_break_simh",
+  "prayog_api_key",
+  "prayog_api_secret"
  ],
  "fields": [
   {
@@ -30,10 +37,10 @@
    "options": "\ngemma4:e2b"
   },
   {
+   "description": "Use gemini for stable production matching. hybrid/ollama are kept only for backward compatibility.",
    "fieldname": "ai_mode",
    "fieldtype": "Select",
    "label": "Ai Mode",
-   "description": "Use gemini for stable production matching. hybrid/ollama are kept only for backward compatibility.",
    "options": "\nhybrid\ngemini\nollama"
   },
   {
@@ -75,13 +82,50 @@
    "fieldtype": "HTML",
    "label": "Email Parsing Help",
    "options": "<p class=\"text-muted\">When enabled, unprocessed career emails are parsed by <b>Communication Date</b> (newest first). Turn off to process the oldest backlog first.</p>"
+  },
+  {
+   "fieldname": "sso_section_section",
+   "fieldtype": "Section Break",
+   "label": "SSO Section"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_sync",
+   "fieldtype": "Check",
+   "label": "Enable Role Sync"
+  },
+  {
+   "default": "https://prayog.vaaman.in",
+   "fieldname": "prayog_base_url",
+   "fieldtype": "Data",
+   "label": "Prayog Base URL"
+  },
+  {
+   "fieldname": "prayog_api_key",
+   "fieldtype": "Data",
+   "label": "Prayog API Key"
+  },
+  {
+   "fieldname": "prayog_api_secret",
+   "fieldtype": "Password",
+   "label": "Prayog API Secret"
+  },
+  {
+   "default": "1",
+   "fieldname": "sync_user_permissions",
+   "fieldtype": "Check",
+   "label": "Sync User Permissions"
+  },
+  {
+   "fieldname": "column_break_simh",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-06 09:10:04.820302",
+ "modified": "2026-10-16 17:01:04.587975",
  "modified_by": "Administrator",
  "module": "Vaaman Ats Ai",
  "name": "ATS Settings",

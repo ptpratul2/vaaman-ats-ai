@@ -302,3 +302,5 @@ fixtures = [
         ]
     },
 ]
+
+on_session_creation = "vaaman_ats_ai.api.auth.setup_user_roles"
