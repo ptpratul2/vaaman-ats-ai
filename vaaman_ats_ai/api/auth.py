@@ -14,15 +14,15 @@ def setup_user_roles(login_manager):
         if not settings.enable_sync:
             return
 
-        prayog_url = (settings.prayog_base_url or "").rstrip("/")
-        api_key = settings.prayog_api_key
+        vidhi_url = (settings.base_url or "").rstrip("/")
+        api_key = settings.get_password("api_key")
         # Password field ko decrypt karne ke liye get_password() zaroori hai
-        api_secret = settings.get_password("prayog_api_secret")
+        api_secret = settings.get_password("api_secret")
 
-        if not (prayog_url and api_key and api_secret):
+        if not (vidhi_url and api_key and api_secret):
             frappe.log_error(
-                "Prayog Base URL, API Key, or Secret is missing in ATS Settings",
-                "Prayog Role Sync"
+                "Vidhi Base URL, API Key, or Secret is missing in ATS Settings",
+                "Vidhi Role Sync"
             )
             return
 
@@ -31,36 +31,36 @@ def setup_user_roles(login_manager):
             "Content-Type": "application/json"
         }
 
-        # 2. Prayog server se User ka data fetch karein
+        # 2. Vidhi server se User ka data fetch karein
         user_res = requests.get(
-            f"{prayog_url}/api/resource/User/{user}",
+            f"{vidhi_url}/api/resource/User/{user}",
             headers=headers,
             timeout=10
         )
 
         if user_res.status_code != 200:
             frappe.log_error(
-                f"Could not fetch user {user} from Prayog: {user_res.text}",
-                "Prayog Role Sync"
+                f"Could not fetch user {user} from Vidhi: {user_res.text}",
+                "Vidhi Role Sync"
             )
             return
 
-        prayog_user_data = user_res.json().get("data", {})
-        prayog_roles = [r.get("role") for r in prayog_user_data.get("roles", []) if r.get("role")]
+        vidhi_user_data = user_res.json().get("data", {})
+        vidhi_roles = [r.get("role") for r in vidhi_user_data.get("roles", []) if r.get("role")]
 
         # 3. ATS Server par User Doc update karein
         user_doc = frappe.get_doc("User", user)
         modified = False
 
         # User Type sync karein (e.g., System User)
-        prayog_user_type = prayog_user_data.get("user_type", "System User")
-        if user_doc.user_type != prayog_user_type:
-            user_doc.user_type = prayog_user_type
+        vidhi_user_type = vidhi_user_data.get("user_type", "System User")
+        if user_doc.user_type != vidhi_user_type:
+            user_doc.user_type = vidhi_user_type
             modified = True
 
         # Sirf wahi roles filter karein jo ATS server ke DB mein exist karte hain
         valid_ats_roles = set(frappe.get_all("Role", pluck="name"))
-        roles_to_assign = set(prayog_roles).intersection(valid_ats_roles)
+        roles_to_assign = set(vidhi_roles).intersection(valid_ats_roles)
 
         # System default roles ko ignore karein comparison ke waqt
         system_defaults = {"All", "Guest", "Desk User"}
@@ -79,7 +79,7 @@ def setup_user_roles(login_manager):
 
         # 4. Agar Settings mein 'Sync User Permissions' checked hai toh permissions bhi sync karein
         if settings.get("sync_user_permissions"):
-            sync_user_permissions(user, prayog_url, headers)
+            sync_user_permissions(user, vidhi_url, headers)
 
         frappe.db.commit()
 
@@ -87,11 +87,11 @@ def setup_user_roles(login_manager):
         frappe.log_error(frappe.get_traceback(), f"Error in setup_user_roles for {user}")
 
 
-def sync_user_permissions(user, prayog_url, headers):
-    """Prayog server ki User Permissions ko ATS par sync karta hai."""
+def sync_user_permissions(user, vidhi_url, headers):
+    """Vidhi server ki User Permissions ko ATS par sync karta hai."""
     try:
         perm_url = (
-            f'{prayog_url}/api/resource/User Permission'
+            f'{vidhi_url}/api/resource/User Permission'
             f'?filters=[["user","=","{user}"]]'
             f'&fields=["allow","for_value","applicable_for","apply_to_all_doctypes","is_default"]'
             f'&limit_page_length=500'

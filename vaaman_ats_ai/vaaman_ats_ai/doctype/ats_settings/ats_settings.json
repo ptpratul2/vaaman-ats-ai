@@ -16,12 +16,12 @@
   "gemini_api_key",
   "host_name",
   "sso_section_section",
-  "prayog_base_url",
+  "base_url",
   "enable_sync",
   "sync_user_permissions",
   "column_break_simh",
-  "prayog_api_key",
-  "prayog_api_secret"
+  "api_key",
+  "api_secret"
  ],
  "fields": [
   {
@@ -95,22 +95,6 @@
    "label": "Enable Role Sync"
   },
   {
-   "default": "https://prayog.vaaman.in",
-   "fieldname": "prayog_base_url",
-   "fieldtype": "Data",
-   "label": "Prayog Base URL"
-  },
-  {
-   "fieldname": "prayog_api_key",
-   "fieldtype": "Data",
-   "label": "Prayog API Key"
-  },
-  {
-   "fieldname": "prayog_api_secret",
-   "fieldtype": "Password",
-   "label": "Prayog API Secret"
-  },
-  {
    "default": "1",
    "fieldname": "sync_user_permissions",
    "fieldtype": "Check",
@@ -119,13 +103,29 @@
   {
    "fieldname": "column_break_simh",
    "fieldtype": "Column Break"
+  },
+  {
+   "default": "https://prayog.vaaman.in",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Base URL"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "api_secret",
+   "fieldtype": "Password",
+   "label": "API Secret"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-16 17:01:04.587975",
+ "modified": "2026-10-26 15:14:32.606832",
  "modified_by": "Administrator",
  "module": "Vaaman Ats Ai",
  "name": "ATS Settings",
