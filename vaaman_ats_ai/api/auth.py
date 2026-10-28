@@ -1,5 +1,7 @@
 import frappe
 import requests
+import random
+import string
 
 def setup_user_roles(login_manager):
     user = login_manager.user
@@ -50,6 +52,19 @@ def setup_user_roles(login_manager):
 
         # 3. ATS Server par User Doc update karein
         user_doc = frappe.get_doc("User", user)
+        
+        # Simple aur 100% working check: 
+        # Agar user ka creation time pichle 1 minute ke andar ka hai, toh yeh pehli baar bana hai!
+        from frappe.utils import now_datetime, get_datetime
+        
+        is_first_login = False
+        if user_doc.creation:
+            creation_time = get_datetime(user_doc.creation)
+            time_diff = (now_datetime() - creation_time).total_seconds()
+            # Agar user abhi pichle 60 seconds mein create hua hai toh email bhej do
+            if time_diff < 60:
+                is_first_login = True
+        
         modified = False
 
         # User Type sync karein (e.g., System User)
@@ -82,6 +97,13 @@ def setup_user_roles(login_manager):
             sync_user_permissions(user, vidhi_url, headers)
 
         frappe.db.commit()
+        
+        # Agar pehla login hai toh password reset email bhej do, warna nahi
+        if is_first_login:
+            try:
+                user_doc.reset_password(send_email=True)
+            except Exception as mail_err:
+                frappe.log_error(f"Failed to send welcome email to {user}: {mail_err}", "SSO Welcome Email Error")
 
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Error in setup_user_roles for {user}")
@@ -101,9 +123,9 @@ def sync_user_permissions(user, vidhi_url, headers):
         if perm_res.status_code != 200:
             return
 
-        prayog_perms = perm_res.json().get("data", [])
+        vidhi_perms = perm_res.json().get("data", [])
 
-        for p in prayog_perms:
+        for p in vidhi_perms:
             allow_doctype = p.get("allow")
             for_value = p.get("for_value")
 
@@ -130,3 +152,21 @@ def sync_user_permissions(user, vidhi_url, headers):
 
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Permission Sync Failed for {user}")
+
+@frappe.whitelist(allow_guest=True)
+def sso_logout():
+    # 1. ATS ka local session khatam karein
+    if frappe.session.user and frappe.session.user != "Guest":
+        frappe.local.login_manager.logout()
+        frappe.db.commit()
+
+    # 2. vidhi server ka URL uthayein
+    settings = frappe.get_single("ATS Settings")
+    vidhi_url = (settings.base_url or "https://vidhi.vaaman.in").rstrip("/")
+    
+    # 3. ATS ka login URL dynamically query parameter ke roop mein bhej dein
+    ats_login_url = settings.redirect_url
+    logout_redirect_url = f"{vidhi_url}/api/method/ats_sso.api.api.sso_logout?redirect_to={ats_login_url}"
+
+    frappe.local.response["type"] = "redirect"
+    frappe.local.response["location"] = logout_redirect_url

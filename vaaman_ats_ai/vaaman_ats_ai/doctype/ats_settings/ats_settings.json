@@ -17,11 +17,12 @@
   "host_name",
   "sso_section_section",
   "base_url",
-  "enable_sync",
-  "sync_user_permissions",
-  "column_break_simh",
   "api_key",
-  "api_secret"
+  "enable_sync",
+  "column_break_simh",
+  "redirect_url",
+  "api_secret",
+  "sync_user_permissions"
  ],
  "fields": [
   {
@@ -119,13 +120,18 @@
    "fieldname": "api_secret",
    "fieldtype": "Password",
    "label": "API Secret"
+  },
+  {
+   "fieldname": "redirect_url",
+   "fieldtype": "Data",
+   "label": "Redirect URL"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-26 15:14:32.606832",
+ "modified": "2026-10-28 16:25:48.244510",
  "modified_by": "Administrator",
  "module": "Vaaman Ats Ai",
  "name": "ATS Settings",
